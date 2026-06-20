@@ -35,10 +35,6 @@
 #define RP_X            (DISP_W - PADDLE_MARGIN - PADDLE_W)
 #define RP_Y            ((DISP_H - PADDLE_H) / 2)
 
-#define NET_X           ((DISP_W - 4) / 2)   /* center dashed line */
-#define NET_SEG_H       16
-#define NET_GAP         12
-
 #define BALL_SPEED      4                     /* pixels per tick */
 #define CPU_SPEED         3                     /* right paddle chase speed (fallback) */
 #define TICK_PERIOD_MS  16                    /* ~60 fps — calmer gameplay pace */
@@ -52,7 +48,6 @@
 
 /* Fonts */
 #define FONT_TITLE      (&lv_font_montserrat_48)
-#define FONT_SCORE      (&lv_font_montserrat_28)
 #define FONT_MENU       (&lv_font_montserrat_36)
 #define FONT_SUB        (&lv_font_montserrat_16)
 
@@ -72,16 +67,12 @@ typedef struct {
     lv_obj_t *left_paddle;
     lv_obj_t *right_paddle;
     lv_obj_t *ball;
-    lv_obj_t *score_label;
 
     /* ball motion */
     int16_t ball_x;
     int16_t ball_y;
     int16_t ball_vx;
     int16_t ball_vy;
-
-    uint8_t score_left;
-    uint8_t score_right;
 
     int16_t right_paddle_y;        /* CPU-controlled right paddle top Y */
     int16_t left_paddle_y;         /* player-controlled left paddle top Y */
@@ -146,15 +137,6 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text,
     return lbl;
 }
 
-static void build_center_net(lv_obj_t *parent)
-{
-    lv_coord_t y = 0;
-    while (y < DISP_H) {
-        make_rect(parent, 4, NET_SEG_H, NET_X, y);
-        y += NET_SEG_H + NET_GAP;
-    }
-}
-
 static void black_screen(lv_obj_t *scr)
 {
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
@@ -175,11 +157,6 @@ static void reset_ball(int8_t direction)
     if (dy == 0) dy = 1;
     g.ball_vx = (direction >= 0 ? 1 : -1) * BALL_SPEED;
     g.ball_vy = dy;
-}
-
-static void update_score_label(void)
-{
-    lv_label_set_text_fmt(g.score_label, "%d   %d", g.score_left, g.score_right);
 }
 
 /* ---- game tick ---- */
@@ -260,14 +237,10 @@ static void pong_tick(lv_timer_t *timer)
         g.ball_vx = -g.ball_vx;
     }
 
-    /* Scoring: ball escaped a side */
+    /* Ball escaped a side: just reset, no score */
     if (g.ball_x + BALL_SIZE < 0) {
-        g.score_right++;
-        update_score_label();
         reset_ball(+1);
     } else if (g.ball_x > DISP_W) {
-        g.score_left++;
-        update_score_label();
         reset_ball(-1);
     }
 
@@ -343,9 +316,6 @@ static void build_game(void)
     lv_obj_t *scr = lv_obj_create(NULL);
     black_screen(scr);
 
-    /* Center dashed net */
-    build_center_net(scr);
-
     /* Left paddle (player via joystick), starts centered */
     g.left_paddle_y = LP_Y;
     g.left_paddle  = make_rect(scr, PADDLE_W, PADDLE_H, LP_X, LP_Y);
@@ -356,16 +326,9 @@ static void build_game(void)
     /* PAUSE button (top center, clear of the round-screen clipping) */
     make_button(scr, 100, 32, (DISP_W - 100) / 2, 8, "PAUSE", pause_btn_cb);
 
-    /* Score */
-    g.score_label = make_label(scr, "0   0", FONT_SCORE, lv_color_white());
-    update_score_label();
-    lv_obj_align(g.score_label, LV_ALIGN_TOP_MID, 0, 48);
-
     /* Ball */
     g.ball = make_rect(scr, BALL_SIZE, BALL_SIZE, 0, 0);
 
-    g.score_left = 0;
-    g.score_right = 0;
     reset_ball((rand() % 2) ? +1 : -1);
     lv_obj_set_pos(g.ball, g.ball_x, g.ball_y);
 
@@ -432,7 +395,6 @@ static void goto_welcome(void)
         g.pause_overlay = NULL;
         g.ball = NULL;
         g.left_paddle = g.right_paddle = NULL;
-        g.score_label = NULL;
     }
 
     /* (re)build welcome if it was deleted, else just show it */

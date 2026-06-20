@@ -1,0 +1,10 @@
+services:
+  dev:
+    build: .
+    container_name: sensepong-dev
+    volumes:
+      - ./:/workspaces/sense-pong
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+  

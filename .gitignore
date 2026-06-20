@@ -1,0 +1,56 @@
+# Build outputs
+build/
+**/build/
+dist/
+out/
+managed_components/
+
+# ESP-IDF generated files
+sdkconfig
+sdkconfig.old
+sdkconfig.h
+dependencies.lock
+
+# Pi coding agent local data
+.pi/
+
+# IDE specific
+.vscode/settings.json
+.vscode/launch.json
+.vscode/c_cpp_properties.json
+.idea/
+*.code-workspace
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor backups
+*.swp
+*.swo
+*~
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Documentation builds
+docs/_build/
+docs/doxygen/
+
+# Testing
+.coverage
+.pytest_cache/
+test-report/

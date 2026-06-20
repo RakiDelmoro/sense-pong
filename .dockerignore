@@ -1,0 +1,14 @@
+.git
+.gitattributes
+.vscode
+build
+dist
+*.log
+__pycache__
+*.pyc
+node_modules
+.env
+
+esp32s3/build
+esp32s3/sdkconfig
+esp32s3/managed_components

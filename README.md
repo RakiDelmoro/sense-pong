@@ -1,7 +1,7 @@
 # sense-pong
 
 > The SenseCAP Indicator **is** the Atari. A self-running Pong that boots
-> straight onto the device's 4-inch round (480×480) touchscreen.
+> straight onto the device's 4-inch square (480×480) touchscreen.
 
 This is a stripped-down fork of the
 [SenseCap-Indicator](https://github.com/RakiDelmoro/SenseCap-Indicator)
@@ -31,7 +31,7 @@ No player input yet — the paddles don't move. That's the next phase.
 
 - ESP32-S3 (main CPU, drives the display)
 - RP2040 (sensor helper — unused for now)
-- 4-inch round RGB LCD, 480×480
+- 4-inch square RGB LCD, 480×480
 - USB-C for power
 
 ## Develop / build / flash

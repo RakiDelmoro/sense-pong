@@ -16,40 +16,25 @@
 #include <stdlib.h>
 #include "joystick.h"
 #include "rp2040_boot.h"
-#include "apriltags.h"
 
 #define DISP_W 480
 #define DISP_H 480
 
-/* Playfield geometry.
- *
- * The 480x480 screen is split into a TAG_SIZE-pixel border ring that
- * holds the four AprilTags (one per corner, the camera's homography
- * anchors) and an inner rectangular playfield where Pong actually
- * happens. The tags sit OUTSIDE the playfield so the ball/paddles never
- * overlap them, and they get cropped out of the NN observation by the
- * warp. TAG_SIZE is a multiple of APRILTAG_GRID (8) so each tag cell is a
- * whole 8x8 pixel block — clean edges, no anti-aliasing, reliable detect. */
-#define TAG_SIZE        64                     /* 8x8 cells @ 8px/cell */
-#define FIELD_LEFT      TAG_SIZE               /* 64 */
-#define FIELD_RIGHT     (DISP_W - TAG_SIZE)    /* 416 */
-#define FIELD_TOP       TAG_SIZE               /* 64 */
-#define FIELD_BOTTOM    (DISP_H - TAG_SIZE)    /* 416 */
-
-#define WALL_TOP        FIELD_TOP
-#define WALL_BOTTOM     FIELD_BOTTOM
+/* Playfield geometry */
+#define WALL_TOP        0
+#define WALL_BOTTOM     (DISP_H - 1)
 #define PADDLE_W        12
-#define PADDLE_H        80     /* ~1/6 of the 352px field height */
-#define PADDLE_MARGIN   24     /* inset from the playfield edges */
+#define PADDLE_H        80     /* ~1/6 of 480px height = balanced Pong paddle */
+#define PADDLE_MARGIN   24
 #define BALL_SIZE       12
 
-/* Left paddle (agent): inset from the left playfield edge, centered */
-#define LP_X            (FIELD_LEFT + PADDLE_MARGIN)
-#define LP_Y            (FIELD_TOP + ((FIELD_BOTTOM - FIELD_TOP) - PADDLE_H) / 2)
+/* Left paddle (agent), vertically centered */
+#define LP_X            PADDLE_MARGIN
+#define LP_Y            ((DISP_H - PADDLE_H) / 2)
 
-/* Right paddle (CPU): inset from the right playfield edge, centered */
-#define RP_X            (FIELD_RIGHT - PADDLE_MARGIN - PADDLE_W)
-#define RP_Y            LP_Y
+/* Right paddle (CPU), vertically centered */
+#define RP_X            (DISP_W - PADDLE_MARGIN - PADDLE_W)
+#define RP_Y            ((DISP_H - PADDLE_H) / 2)
 
 #define BALL_SPEED      4                     /* pixels per tick */
 #define CPU_SPEED         3                     /* right paddle chase speed (fallback) */
@@ -58,9 +43,9 @@
 /* Right paddle speed when driven by the joystick (pixels per tick at full stick). */
 #define JOYSTICK_SPEED   6
 
-/* Paddle vertical travel, clamped to the inner playfield */
-#define PADDLE_Y_MIN    FIELD_TOP
-#define PADDLE_Y_MAX    (FIELD_BOTTOM - PADDLE_H)
+/* Paddle can move between these Y bounds (keeps full paddle on-screen) */
+#define PADDLE_Y_MIN    0
+#define PADDLE_Y_MAX    (DISP_H - PADDLE_H)
 
 /* Fonts */
 #define FONT_TITLE      (&lv_font_montserrat_48)
@@ -100,11 +85,6 @@ typedef struct {
     uint16_t score_right;          /* CPU   (right paddle) points */
     lv_obj_t *score_left_lbl;
     lv_obj_t *score_right_lbl;
-
-    /* AprilTag canvases' backing buffers (PSRAM). Kept so they can be
-     * freed when the game screen is torn down — LVGL frees the canvas
-     * objects itself, but not these malloc'd pixel buffers. */
-    void *tag_buf[APRILTAG_COUNT];
 
     pong_phase_t state;
     lv_timer_t *tick_timer;
@@ -175,44 +155,12 @@ static void black_screen(lv_obj_t *scr)
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-/* Draw one AprilTag (tag36h11) as a static TAG_SIZE x TAG_SIZE canvas at
- * (x,y). Paints the 8x8 cell grid (1-cell black border ring + 6x6 payload)
- * cell-by-cell; each cell is an 8px block so edges land on pixel
- * boundaries for clean detection. Drawn once in build_game(); tags never
- * move. The backing buffer is malloc'd (PSRAM via the unified heap) and
- * returned via out_buf so the caller can free it on teardown. */
-static lv_obj_t *make_tag(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
-                          int id, void **out_buf)
-{
-    lv_obj_t *c = lv_canvas_create(parent);
-    void *buf = malloc((size_t)TAG_SIZE * TAG_SIZE * sizeof(lv_color_t));
-    lv_canvas_set_buffer(c, buf, TAG_SIZE, TAG_SIZE, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_fill_bg(c, lv_color_black(), LV_OPA_COVER);
-
-    const uint8_t (*grid)[APRILTAG_GRID] = apriltag_cell[id];
-    const int step = TAG_SIZE / APRILTAG_GRID;     /* 8 px per cell */
-    for (int cy = 0; cy < APRILTAG_GRID; cy++) {
-        for (int cx = 0; cx < APRILTAG_GRID; cx++) {
-            if (!grid[cy][cx]) continue;          /* black cells are the bg */
-            lv_coord_t px0 = cx * step, py0 = cy * step;
-            for (int dy = 0; dy < step; dy++)
-                for (int dx = 0; dx < step; dx++)
-                    lv_canvas_set_px_color(c, px0 + dx, py0 + dy,
-                                           lv_color_white());
-        }
-    }
-    lv_obj_set_pos(c, x, y);
-    if (out_buf) *out_buf = buf;
-    return c;
-}
-
 /* ---- ball / score ---- */
 
 static void reset_ball(int8_t direction)
 {
-    /* Serve from the center of the inner playfield. */
-    g.ball_x = FIELD_LEFT + ((FIELD_RIGHT - FIELD_LEFT) - BALL_SIZE) / 2;
-    g.ball_y = FIELD_TOP  + ((FIELD_BOTTOM - FIELD_TOP) - BALL_SIZE) / 2;
+    g.ball_x = (DISP_W - BALL_SIZE) / 2;
+    g.ball_y = (DISP_H - BALL_SIZE) / 2;
 
     int8_t dy = (rand() % 5) - 2;            /* -2..2 */
     if (dy == 0) dy = 1;
@@ -322,13 +270,13 @@ static void pong_tick(lv_timer_t *timer)
      * The host only cares about the letter: L -> agent +1, R -> agent -1.
      * Print RAW (no ESP_LOG tag/timestamp prefix) so the host line parser
      * can scan for the `P ` prefix cleanly. */
-    if (g.ball_x + BALL_SIZE < FIELD_LEFT) {
+    if (g.ball_x + BALL_SIZE < 0) {
         /* escaped LEFT edge -> RIGHT (CPU) scored -> agent reward -1 */
         g.score_right++;
         printf("P R %u %u\n", g.score_left, g.score_right);
         update_score_labels();
         reset_ball(-1);
-    } else if (g.ball_x > FIELD_RIGHT) {
+    } else if (g.ball_x > DISP_W) {
         /* escaped RIGHT edge -> LEFT (agent) scored -> agent reward +1 */
         g.score_left++;
         printf("P L %u %u\n", g.score_left, g.score_right);
@@ -415,25 +363,16 @@ static void build_game(void)
     g.right_paddle_y = RP_Y;
     g.right_paddle = make_rect(scr, PADDLE_W, PADDLE_H, RP_X, RP_Y);
 
-    /* Four AprilTags, one per screen corner. The camera detects these and
-     * solves the homography that warps the screen to a clean rectangle.
-     * ID -> corner: 0=TL, 1=TR, 2=BR, 3=BL (clockwise from top-left). */
-    make_tag(scr, 0,                  0,                  0, &g.tag_buf[0]);
-    make_tag(scr, DISP_W - TAG_SIZE,  0,                  1, &g.tag_buf[1]);
-    make_tag(scr, DISP_W - TAG_SIZE,  DISP_H - TAG_SIZE,  2, &g.tag_buf[2]);
-    make_tag(scr, 0,                  DISP_H - TAG_SIZE,  3, &g.tag_buf[3]);
+    /* PAUSE button (top center) */
+    make_button(scr, 100, 32, (DISP_W - 100) / 2, 8, "PAUSE", pause_btn_cb);
 
-    /* PAUSE button (top center of the border strip, between the top tags) */
-    make_button(scr, 100, 32, (DISP_W - 100) / 2, 16, "PAUSE", pause_btn_cb);
-
-    /* Score labels in the top border strip, flanking PAUSE and clear of
-     * the corner tags (tags occupy x<64 and x>416). */
+    /* Score labels, top-left and top-right of the screen. */
     g.score_left  = 0;
     g.score_right = 0;
     g.score_left_lbl  = make_label(scr, "0", FONT_SUB, lv_color_white());
-    lv_obj_align(g.score_left_lbl,  LV_ALIGN_TOP_LEFT,  FIELD_LEFT + 8, 16);
+    lv_obj_align(g.score_left_lbl,  LV_ALIGN_TOP_LEFT,  16, 8);
     g.score_right_lbl = make_label(scr, "0", FONT_SUB, lv_color_white());
-    lv_obj_align(g.score_right_lbl, LV_ALIGN_TOP_RIGHT, -(FIELD_LEFT + 8), 16);
+    lv_obj_align(g.score_right_lbl, LV_ALIGN_TOP_RIGHT, -16, 8);
 
     /* Ball */
     g.ball = make_rect(scr, BALL_SIZE, BALL_SIZE, 0, 0);
@@ -505,12 +444,6 @@ static void goto_welcome(void)
         g.pause_overlay = NULL;
         g.ball = NULL;
         g.left_paddle = g.right_paddle = NULL;
-        /* Free the tag canvas backing buffers (LVGL freed the canvases
-         * themselves via lv_obj_del above). */
-        for (int i = 0; i < APRILTAG_COUNT; i++) {
-            free(g.tag_buf[i]);
-            g.tag_buf[i] = NULL;
-        }
     }
 
     /* (re)build welcome if it was deleted, else just show it */
@@ -529,6 +462,5 @@ void pong_start(void)
     g.game_screen = NULL;
     g.pause_overlay = NULL;
     g.welcome_screen = NULL;
-    for (int i = 0; i < APRILTAG_COUNT; i++) g.tag_buf[i] = NULL;
     build_welcome();
 }
